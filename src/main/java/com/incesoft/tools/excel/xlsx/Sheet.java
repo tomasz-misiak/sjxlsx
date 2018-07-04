@@ -1,5 +1,6 @@
 package com.incesoft.tools.excel.xlsx;
 
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -46,7 +47,8 @@ public class Sheet {
   void parseAllRows() {
     if (!alreadyParsed) {
       alreadyParsed = true;
-      new SheetRowReader(this, workbook.getSheetReader(sheetIndex + 1), true).readRow();
+      new SheetRowReader(this, workbook.getSheetReader(sheetIndex + 1),
+              true).readRow();
     }
   }
 
@@ -54,9 +56,9 @@ public class Sheet {
 
   /**
    * Load row one by one for performance consideration. If using this method
-   * with {@link #setAddToMemory(boolean)}=true,you should be careful with the
-   * 'modifyXXX' methods,because it won't put any rows into memory -- sth like
-   * 'readonly' mode.Besides,the stream-modify api will come in soon.
+   * with {@link #setAddToMemory(boolean)}=true,you should be careful with
+   * the 'modifyXXX' methods,because it won't put any rows into memory -- sth
+   * like 'readonly' mode.Besides,the stream-modify api will come in soon.
    *
    * @return null if there is no more rows
    */
@@ -70,8 +72,8 @@ public class Sheet {
   }
 
   public static class SheetRowReader {
-    public final static int MAX_COLUMN_SPAN = 26 * 26 + 26; // [A-Z]x[A-Z] +
-                                                            // [A-Z]
+    public final static int MAX_COLUMN_SPAN = 702; // [A-Z]x[A-Z] +
+    // [A-Z]
 
     IteratorStatus status = new IteratorStatus();
 
@@ -124,87 +126,95 @@ public class Sheet {
         while (reader.hasNext()) {
           int type = reader.next();
           switch (type) {
-          case XMLStreamReader.START_ELEMENT:
-            if ("col".equals(reader.getLocalName())) {
-              increaseColumnCountInSheet();
-            }
-            if ("row".equals(reader.getLocalName())) {
-              spans = reader.getAttributeValue(null, "spans");
-              if (spans == null) {
-                if (anyColumnsDefinedBeforeSheetData()) {
+            case XMLStreamReader.START_ELEMENT:
+              if ("col".equals(reader.getLocalName())) {
+                increaseColumnCountInSheet();
+              }
+              if ("row".equals(reader.getLocalName())) {
+                spans = reader.getAttributeValue(null, "spans");
+                if (spans == null) {
+                  if (anyColumnsDefinedBeforeSheetData()) {
+                    setLastRowIndex();
+                    columnCount = checkIfColumnLimitIsReachedIfYesReturnMaxColumn(columnCount);
+                    ret = new Cell[columnCount];
+                  } else {
+                    // trully empty row
+                    ret = EMPTY_ROW;
+                  }
+                }else{
                   setLastRowIndex();
-                  columnCount = checkIfColumnLimitIsReachedIfYesReturnMaxColumn(columnCount);
-                  ret = new Cell[columnCount];
+                  columnspan = Integer.valueOf(spans.substring(spans.indexOf(":") + 1));
+                  columnspan = checkIfColumnLimitIsReachedIfYesReturnMaxColumn(columnspan);
+                  ret = new Cell[columnspan];
+                }
+              } else if ("c".equals(reader.getLocalName())) {
+                if (ret != null) {
+                  t = reader.getAttributeValue(null, "t");
+                  // s = reader.getAttributeValue(null, "s");
+                  r = reader.getAttributeValue(null, "r");
+                  text = null;
+                  v = null;
+                  while (reader.hasNext()) {
+                    type = reader.next();
+                    if (type == XMLStreamReader.CHARACTERS) {
+                      v = reader.getText();
+                      if ("s".equals(t)) {
+                        text = sheet.workbook
+                                .getSharedStringValue(Integer
+                                        .valueOf(v));
+                      }
+                    } else if (type == XMLStreamReader.END_ELEMENT
+                            && "c"
+                            .equals(reader
+                                    .getLocalName())) {
+                      break;
+                    }
+                  }
+                  if (r.charAt(1) < 'A') {// number
+                    ret[r.charAt(0) - 'A'] = new Cell(r, s, t,
+                            v, text);
+                  } else if (r.length() > 2 && r.charAt(2) < 'A') {
+                    int i = (r.charAt(1) - 'A') + (r.charAt(0) - 'A' + 1) * 26;
+                    if (i < MAX_COLUMN_SPAN)
+                      ret[i] = new Cell(r, s, t, v, text);
+                  }
+                  // ignore columns larger than AZ
                 } else {
-                  // trully empty row
-                  ret = EMPTY_ROW;
+                  throw new IllegalStateException(
+                          "<c> mal-format");
                 }
-              } else {
-                setLastRowIndex();
-                columnspan = Integer.valueOf(spans.substring(spans.indexOf(":") + 1));
-                columnspan = checkIfColumnLimitIsReachedIfYesReturnMaxColumn(columnspan);
-                ret = new Cell[columnspan];
               }
-            } else if ("c".equals(reader.getLocalName())) {
-              if (ret != null) {
-                t = reader.getAttributeValue(null, "t");
-                // s = reader.getAttributeValue(null, "s");
-                r = reader.getAttributeValue(null, "r");
-                text = null;
-                v = null;
-                while (reader.hasNext()) {
-                  type = reader.next();
-                  if (type == XMLStreamReader.CHARACTERS) {
-                    v = reader.getText();
-                    if ("s".equals(t)) {
-                      text = sheet.workbook.getSharedStringValue(Integer.valueOf(v));
-                    }
-                  } else if (type == XMLStreamReader.END_ELEMENT && "c".equals(reader.getLocalName())) {
-                    break;
-                  }
-                }
-                if (r.charAt(1) < 'A') {// number
-                  ret[r.charAt(0) - 'A'] = new Cell(r, s, t, v, text);
-                } else if (r.length() > 2 && r.charAt(2) < 'A') {
-                  int i = (r.charAt(1) - 'A') + (r.charAt(0) - 'A' + 1) * 26;
-                  if (i < MAX_COLUMN_SPAN)
-                    ret[i] = new Cell(r, s, t, v, text);
-                }
-                // ignore columns larger than AZ
-              } else {
-                throw new IllegalStateException("<c> mal-format");
-              }
-            }
-            break;
-          case XMLStreamReader.END_ELEMENT:
-            if ("row".equals(reader.getLocalName())) {
-              if (loadEagerly) {
-                status.rowIndex++;
-                if (status.rowIndex < lastRowIndex) {
-                  if (sheet.addToMemory) {
-                    // fill the empty rows
-                    for (int i = 0; i < lastRowIndex - status.rowIndex; i++) {
-                      sheet.parsedRows.add(EMPTY_ROW);
+              break;
+            case XMLStreamReader.END_ELEMENT:
+              if ("row".equals(reader.getLocalName())) {
+                if (loadEagerly) {
+                  status.rowIndex++;
+                  if (status.rowIndex < lastRowIndex) {
+                    if (sheet.addToMemory) {
+                      // fill the empty rows
+                      for (int i = 0; i < lastRowIndex
+                              - status.rowIndex; i++) {
+                        sheet.parsedRows.add(EMPTY_ROW);
+                      }
                     }
                   }
+                  status.rowIndex = lastRowIndex;
                 }
-                status.rowIndex = lastRowIndex;
+                if (sheet.addToMemory) {
+                  sheet.parsedRows.add(ret);
+                }
+                if (loadEagerly) {
+                  ret = null;
+                } else if (status.rowIndex < lastRowIndex) {
+                  delayRow = ret;
+                  return EMPTY_ROW;
+                } else {
+                  return ret;
+                }
               }
-              if (sheet.addToMemory) {
-                sheet.parsedRows.add(ret);
-              }
-              if (loadEagerly) {
-                ret = null;
-              } else if (status.rowIndex < lastRowIndex) {
-                delayRow = ret;
-                return EMPTY_ROW;
-              } else {
-                return ret;
-              }
-            }
-            break;
-          default:
-            break;
+              break;
+            default:
+              break;
           }
         }
       } catch (XMLStreamException e) {
@@ -239,20 +249,22 @@ public class Sheet {
   }
 
   public SheetRowReader newReader() {
-    return new SheetRowReader(this, workbook.getSheetReader(sheetIndex + 1), false);
+    return new SheetRowReader(this,
+            workbook.getSheetReader(sheetIndex + 1), false);
   }
 
   private boolean addToMemory = true;
 
   /**
-   * Should only be called in one loop while termination condition is nextRow()
-   * == null
+   * Should only be called in one loop while termination condition is
+   * nextRow() == null
    *
    * @return
    */
   public List<Cell[]> getRows() {
     if (!(alreadyParsed && addToMemory)) {
-      throw new IllegalStateException("rows not parsed,it should only be used in classic mode");
+      throw new IllegalStateException(
+              "rows not parsed,it should only be used in classic mode");
     }
     return parsedRows;
   }
@@ -273,25 +285,29 @@ public class Sheet {
         loopR: while (reader.hasNext()) {
           int type = reader.next();
           switch (type) {
-          case XMLStreamReader.START_ELEMENT:
-            if ("dimension".equals(reader.getLocalName())) {
-              String v = reader.getAttributeValue(null, "ref");
-              if (v != null) {
-                String[] spanPair = v.replaceAll("[A-Z]", "").split(":");
-                if (spanPair.length == 2) {
-                  try {
-                    rowCount = Integer.valueOf(spanPair[1]) - Integer.valueOf(spanPair[0]) + 1;
-                  } catch (NumberFormatException e) {
+            case XMLStreamReader.START_ELEMENT:
+              if ("dimension".equals(reader.getLocalName())) {
+                String v = reader.getAttributeValue(null, "ref");
+                if (v != null) {
+                  String[] spanPair = v.replaceAll("[A-Z]", "")
+                          .split(":");
+                  if (spanPair.length == 2) {
+                    try {
+                      rowCount = Integer.valueOf(spanPair[1])
+                              - Integer.valueOf(spanPair[0])
+                              + 1;
+                    } catch (NumberFormatException e) {
+                    }
+                    break loopR;
                   }
-                  break loopR;
                 }
+              } else if ("row".equals(reader.getLocalName())) {
+                int r = Integer.valueOf(reader.getAttributeValue(
+                        null, "r"));
+                if (r > rowCount)
+                  rowCount = r;
               }
-            } else if ("row".equals(reader.getLocalName())) {
-              int r = Integer.valueOf(reader.getAttributeValue(null, "r"));
-              if (r > rowCount)
-                rowCount = r;
-            }
-            break;
+              break;
           }
         }
       } catch (XMLStreamException e) {
@@ -312,7 +328,8 @@ public class Sheet {
 
   public String getCellValue(int row, int column) {
     if (!(alreadyParsed && addToMemory)) {
-      throw new IllegalStateException("rows not parsed,it should only be used in classic mode");
+      throw new IllegalStateException(
+              "rows not parsed,it should only be used in classic mode");
     }
     if (row < parsedRows.size()) {
       Cell[] rowEntry = parsedRows.get(row);
@@ -320,7 +337,8 @@ public class Sheet {
         return null;
       }
       if (column < rowEntry.length) {
-        return rowEntry[column] == null ? null : rowEntry[column].getValue();
+        return rowEntry[column] == null ? null : rowEntry[column]
+                .getValue();
       }
       return null;
     }
@@ -329,9 +347,11 @@ public class Sheet {
 
   public String getCellValue(String cellId) {
     if (!(alreadyParsed && addToMemory)) {
-      throw new IllegalStateException("rows not parsed,it should only be used in classic mode");
+      throw new IllegalStateException(
+              "rows not parsed,it should only be used in classic mode");
     }
-    return getCellValue(Integer.valueOf(cellId.substring(1)) - 1, cellId.charAt(0) - 'A');
+    return getCellValue(Integer.valueOf(cellId.substring(1)) - 1, cellId
+            .charAt(0) - 'A');
   }
 
   // READ<<<
@@ -349,7 +369,8 @@ public class Sheet {
   /**
    * {rowIndex,modifications}
    */
-  HashMap<Integer, List<ModifyEntry>> modifications = new HashMap<Integer, List<ModifyEntry>>(100);
+  HashMap<Integer, List<ModifyEntry>> modifications = new HashMap<Integer, List<ModifyEntry>>(
+          100);
 
   /**
    * max row index have been modified - for append/add convenience
@@ -357,12 +378,15 @@ public class Sheet {
    * @return
    */
   public int getModfiedRowLength() {
-    return modifiedRowLength == 0 ? lastCommittedRowLength : modifiedRowLength;
+    return modifiedRowLength == 0 ? lastCommittedRowLength
+            : modifiedRowLength;
   }
 
   public int modify(int r, int c, String comment) {
     if (c > SheetRowReader.MAX_COLUMN_SPAN - 1) {
-      throw new IllegalArgumentException("column index(" + c + ") exceeded the limit(" + (SheetRowReader.MAX_COLUMN_SPAN - 1) + ")");
+      throw new IllegalArgumentException("column index(" + c
+              + ") exceeded the limit("
+              + (SheetRowReader.MAX_COLUMN_SPAN - 1) + ")");
     }
     if (r == -1) {
       r = getModfiedRowLength();
@@ -386,14 +410,16 @@ public class Sheet {
   /**
    *
    * @param r
-   *          -1 to append
+   *            -1 to append
    * @param c
    * @param text
    * @param style
    */
   public int modify(int r, int c, String text, CellStyle style) {
     if (c > SheetRowReader.MAX_COLUMN_SPAN - 1) {
-      throw new IllegalArgumentException("column index(" + c + ") exceeded the limit(" + (SheetRowReader.MAX_COLUMN_SPAN - 1) + ")");
+      throw new IllegalArgumentException("column index(" + c
+              + ") exceeded the limit("
+              + (SheetRowReader.MAX_COLUMN_SPAN - 1) + ")");
     }
     if (r == -1) {
       r = getModfiedRowLength();
@@ -421,7 +447,9 @@ public class Sheet {
 
   public int modify(int r, int c, RichText text, CellStyle style) {
     if (c > SheetRowReader.MAX_COLUMN_SPAN - 1) {
-      throw new IllegalArgumentException("column index(" + c + ") exceeded the limit(" + (SheetRowReader.MAX_COLUMN_SPAN - 1) + ")");
+      throw new IllegalArgumentException("column index(" + c
+              + ") exceeded the limit("
+              + (SheetRowReader.MAX_COLUMN_SPAN - 1) + ")");
     }
     if (r == -1) {
       r = getModfiedRowLength();
@@ -442,7 +470,8 @@ public class Sheet {
     return r;
   }
 
-  public void writeDocumentStart(XMLStreamWriter writer) throws XMLStreamException {
+  public void writeDocumentStart(XMLStreamWriter writer)
+          throws XMLStreamException {
     // PATCH ,cause XmlStreamRead's START_DOCUMENT event never occurred
     writer.writeStartDocument("UTF-8", "1.0");
   }
@@ -458,8 +487,10 @@ public class Sheet {
         if (text instanceof RichText) {
           if (text.getText() == null && cell != null) {
             if (cell.getValue() == null) {
-              throw new IllegalStateException("there is no cell content for richtext modification,cell="
-                  + getCellId(modification.r, modification.c));
+              throw new IllegalStateException(
+                      "there is no cell content for richtext modification,cell="
+                              + getCellId(modification.r,
+                              modification.c));
             }
             text.setText(cell.getValue());
           }
@@ -482,7 +513,8 @@ public class Sheet {
 
     SheetCommentWriter commentWriter;
 
-    public SheetWriter(XMLStreamWriter xmlWriter, SheetCommentWriter commentWriter) {
+    public SheetWriter(XMLStreamWriter xmlWriter,
+                       SheetCommentWriter commentWriter) {
       super();
       this.xmlWriter = xmlWriter;
       this.commentWriter = commentWriter;
@@ -491,12 +523,17 @@ public class Sheet {
     void writeStart() throws XMLStreamException {
       xmlWriter.writeStartDocument("UTF-8", "1.0");
       xmlWriter.writeStartElement("worksheet");
-      xmlWriter.writeNamespace("xmlns", "http://schemas.openxmlformats.org/spreadsheetml/2006/main");
-      xmlWriter.writeNamespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+      xmlWriter
+              .writeNamespace("xmlns",
+                      "http://schemas.openxmlformats.org/spreadsheetml/2006/main");
+      xmlWriter
+              .writeNamespace("r",
+                      "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
       xmlWriter.writeStartElement("sheetData");
     }
 
-    void writeEnd(String commentRId, String vmlRid, String settingRid) throws XMLStreamException {
+    void writeEnd(String commentRId, String vmlRid, String settingRid)
+            throws XMLStreamException {
       xmlWriter.writeEndElement();// end sheetData
       if (settingRid != null) {
         xmlWriter.writeStartElement("pageSetup");
@@ -522,7 +559,8 @@ public class Sheet {
     void writeRow(Cell[] row, int rowIndex) throws XMLStreamException {
       this.rowIndex = rowIndex;
       int maxCol = 0;// max column index
-      List<ModifyEntry> modificationList = modifications.isEmpty() ? null : modifications.get(rowIndex);
+      List<ModifyEntry> modificationList = modifications.isEmpty() ? null
+              : modifications.get(rowIndex);
       if (modificationList != null) {
         for (ModifyEntry entry : modificationList) {
           if (entry.c >= maxCol) {
@@ -553,7 +591,8 @@ public class Sheet {
       // modifiy cells
       if (modificationList != null) {
         for (ModifyEntry modification : modificationList) {
-          row[modification.c] = modifyCellInternal(modification, row[modification.c]);
+          row[modification.c] = modifyCellInternal(modification,
+                  row[modification.c]);
         }
       }
 
@@ -572,7 +611,8 @@ public class Sheet {
       xmlWriter.writeEndElement();// end row
     }
 
-    private void writeCell(int row, int c, Cell cell, XMLStreamWriter writer) throws XMLStreamException {
+    private void writeCell(int row, int c, Cell cell, XMLStreamWriter writer)
+            throws XMLStreamException {
       if (cell != null) {
         writer.writeStartElement("c");
         writer.writeAttribute("r", cell.getR());
@@ -596,19 +636,25 @@ public class Sheet {
 
   private SheetWriter sheetsWriter;
 
-  void writeSheetStart(XMLStreamWriter writer, XMLStreamCreator commentWriter, XMLStreamCreator vmlWriter) throws XMLStreamException {
+  void writeSheetStart(XMLStreamWriter writer,
+                       XMLStreamCreator commentWriter, XMLStreamCreator vmlWriter)
+          throws XMLStreamException {
     if (sheetsWriter != null) {
       throw new IllegalStateException("sheets can only be merged once.");
     }
-    sheetsWriter = new SheetWriter(writer, new SheetCommentWriter(commentWriter, vmlWriter));
+    sheetsWriter = new SheetWriter(writer, new SheetCommentWriter(
+            commentWriter, vmlWriter));
     sheetsWriter.writeStart();
   }
 
   public boolean isCommentModified() {
-    return this.sheetsWriter != null && this.sheetsWriter.commentWriter != null && this.sheetsWriter.commentWriter.startWriten;
+    return this.sheetsWriter != null
+            && this.sheetsWriter.commentWriter != null
+            && this.sheetsWriter.commentWriter.startWriten;
   }
 
-  void writeSheetEnd(String commentRId, String vmlRid, String settingRid) throws XMLStreamException {
+  void writeSheetEnd(String commentRId, String vmlRid, String settingRid)
+          throws XMLStreamException {
     sheetsWriter.writeEnd(commentRId, vmlRid, settingRid);
   }
 
@@ -625,11 +671,9 @@ public class Sheet {
 
   /**
    * <?xml version="1.0" encoding="UTF-8" standalone="yes"?> <worksheet
-   * xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r=
-   * "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-   * ><sheetData>
-   *
-   * @param writer
+   * xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+   * xmlns:r=
+   * "http://schemas.openxmlformats.org/officeDocument/2006/relationships" ><sheetData>
    * @throws XMLStreamException
    */
   void mergeSheet() throws XMLStreamException {
@@ -691,7 +735,9 @@ public class Sheet {
     if (c <= 25) {
       return COLUMNS[c] + String.valueOf(r + 1);
     } else {
-      return String.valueOf(new char[] { COLUMNS[c / COLUMNS.length - 1], COLUMNS[c % COLUMNS.length] }) + String.valueOf(r + 1);
+      return String.valueOf(new char[] { COLUMNS[c / COLUMNS.length - 1],
+              COLUMNS[c % COLUMNS.length] })
+              + String.valueOf(r + 1);
     }
   }
 
